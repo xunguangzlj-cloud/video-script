@@ -69,7 +69,17 @@
       "Bash(winget list *)",
       "Bash(npm install *)",
       "Bash(gh repo *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(ssh *)",
+      "Bash(npx skills *)",
+      "Bash(pip install *)",
+      "Bash(python -m pip install PySide6 openai python-dotenv opencv-python numpy)",
+      "Bash(py --version)",
+      "Read(//c/Program Files/**)",
+      "Bash(cmd *)",
+      "Bash(py -m pip --version)"
     ]
   }
 }
