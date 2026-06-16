@@ -56,7 +56,8 @@ def extract_soft_subtitle(input_video: str | Path) -> str | None:
             "-y",
             str(output_srt),
         ]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+        subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                       encoding="utf-8", errors="replace", check=True)
 
         if output_srt.exists():
             text = output_srt.read_text(encoding="utf-8", errors="replace")

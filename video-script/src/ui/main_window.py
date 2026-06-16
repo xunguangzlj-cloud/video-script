@@ -33,6 +33,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("视频转文字剧本")
         self.video_path: str | None = None
+        self._worker = None
+        self._script_json = None
 
         self._check_environment()
         self._build_ui()
@@ -141,6 +143,7 @@ class MainWindow(QMainWindow):
         export_layout = QHBoxLayout()
         self.btn_export = QPushButton("💾 导出 JSON")
         self.btn_export.setEnabled(False)
+        self.btn_export.clicked.connect(self._on_export)
         export_layout.addWidget(self.btn_export)
         export_layout.addStretch()
         layout.addLayout(export_layout)
@@ -183,18 +186,145 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(False)
         self.btn_cancel.setEnabled(True)
         self.btn_import.setEnabled(False)
+        self.btn_export.setEnabled(False)
         self.lbl_status.setText("正在处理...")
+        self.script_viewer.setPlainText("")
 
-        # TODO: 启动流水线（后续阶段实现）
-        self.script_viewer.setPlainText("处理中...\n（流水线将在后续阶段实现）")
+        # 创建并启动流水线
+        self._worker = self._build_worker(self.video_path)
+        self._worker.start()
 
     def _on_cancel(self):
         """取消处理"""
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
         self.btn_cancel.setEnabled(False)
         self.btn_start.setEnabled(True)
         self.btn_import.setEnabled(True)
         self.lbl_status.setText("已取消")
         self.progress_bar.setVisible(False)
+
+    # ---------- 流水线连接 ----------
+
+    def _build_worker(self, video_path: str):
+        """创建 PipelineWorker 并连接信号"""
+        from src.services.pipeline_orchestrator import PipelineWorker
+
+        worker = PipelineWorker(video_path)
+        worker.progress.connect(self._on_pipeline_progress)
+        worker.finished.connect(self._on_pipeline_finished)
+        worker.error.connect(self._on_pipeline_error)
+        worker.subtitle_found.connect(self._on_subtitle_found)
+        worker.finished.connect(lambda: self.btn_cancel.setEnabled(False))
+        worker.finished.connect(lambda: self.btn_start.setEnabled(True))
+        worker.finished.connect(lambda: self.btn_import.setEnabled(True))
+        worker.error.connect(lambda: self.btn_cancel.setEnabled(False))
+        worker.error.connect(lambda: self.btn_start.setEnabled(True))
+        worker.error.connect(lambda: self.btn_import.setEnabled(True))
+        return worker
+
+    def _on_pipeline_progress(self, pct: int, msg: str):
+        """更新进度条"""
+        self.progress_bar.setValue(pct)
+        self.lbl_status.setText(msg)
+
+    def _on_pipeline_finished(self, script_json: dict):
+        """流水线完成"""
+        self._script_json = script_json
+        self.btn_export.setEnabled(True)
+
+        # 将 JSON 格式化为可读文本展示
+        import json
+        formatted = json.dumps(script_json, ensure_ascii=False, indent=2)
+        self.script_viewer.setPlainText(formatted[:100000])  # 截断超长文本
+
+    def _on_pipeline_error(self, error_msg: str):
+        """流水线出错"""
+        self.script_viewer.setPlainText(f"❌ 处理出错：\n\n{error_msg}")
+
+    def _on_subtitle_found(self, source: str, preview: str):
+        """字幕提取完成"""
+        source_labels = {
+            "soft": "软字幕",
+            "hard_ocr": "硬字幕 OCR",
+            "whisper": "语音识别",
+            "none": "无字幕",
+        }
+        label = source_labels.get(source, source)
+        self.lbl_status.setText(f"字幕来源: {label}")
+        self.script_viewer.append(f"📝 [字幕 - {label}]\n{preview}\n\n---\n")
+
+    def _on_export(self):
+        """导出 JSON 剧本"""
+        if not self._script_json:
+            return
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "导出剧本", f"剧本_{Path(self.video_path).stem}.json",
+            "JSON 文件 (*.json);;Markdown 文件 (*.md);;文本文件 (*.txt)"
+        )
+
+        if not save_path:
+            return
+
+        import json
+        save_path = Path(save_path)
+
+        try:
+            if save_path.suffix == ".md":
+                self._export_markdown(save_path)
+            else:
+                with open(save_path, "w", encoding="utf-8") as f:
+                    json.dump(self._script_json, f, ensure_ascii=False, indent=2)
+
+            self.lbl_status.setText(f"已导出: {save_path.name}")
+        except Exception as e:
+            QMessageBox.warning(self, "导出失败", str(e))
+
+    def _export_markdown(self, path: Path):
+        """导出为 Markdown 格式"""
+        s = self._script_json
+        lines = [
+            f"# {s.get('metadata', {}).get('title', '剧本')}",
+            f"时长: {s.get('metadata', {}).get('duration', '')}  |  字幕: {s.get('metadata', {}).get('subtitle_source', '')}",
+            "",
+        ]
+
+        # 角色表
+        chars = s.get("characters", [])
+        if chars:
+            lines.append("## 角色")
+            for c in chars:
+                lines.append(f"- **{c.get('name', '')}** ({c.get('id', '')}): {c.get('description', '')}")
+            lines.append("")
+
+        # 场景
+        for sc in s.get("scenes", []):
+            heading = sc.get("scene_heading", {})
+            lines.append(f"## 第{sc.get('scene_number', '?')}场")
+            lines.append(f"**{heading.get('location_type', '')} {heading.get('location', '')} — {heading.get('time_of_day', '')}**")
+            lines.append("")
+
+            vis = sc.get("visual_description", {})
+            if vis:
+                lines.append(f"*{vis.get('setting', '')} | {vis.get('atmosphere', '')} | {vis.get('lighting', '')}*")
+                lines.append("")
+
+            for d in sc.get("dialogues", []):
+                lines.append(f"**{d.get('character_id', '?')}**: {d.get('line', '')}")
+                if d.get("delivery_notes"):
+                    lines.append(f"  *({d['delivery_notes']})*")
+                lines.append("")
+
+            for a in sc.get("actions", []):
+                lines.append(f"> [{a.get('character_id', '')}] {a.get('description', '')}")
+                lines.append("")
+
+            lines.append("---")
+            lines.append("")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
 
     def _open_env_file(self):
         """打开 .env 配置文件"""

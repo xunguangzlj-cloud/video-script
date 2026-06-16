@@ -14,6 +14,54 @@ class ScriptGenerator:
             base_url=Settings.DEEPSEEK_BASE_URL,
         )
 
+    def correct_proper_nouns(
+        self,
+        dialogue_text: str,
+        ocr_text: str,
+    ) -> str:
+        """用 OCR 硬字幕文本作为术语权威来源，校正 Whisper 转录中的专有名词
+
+        Whisper 是"听音辨字"，对游戏/影视专有名词（人名、地名、术语）容易出错；
+        硬字幕 OCR 从画面中直接提取文字，专有名词准确率高。
+        本方法用 DeepSeek 将两者对齐，输出校正后的对话文本。
+
+        Args:
+            dialogue_text: Whisper 转录的原始对话文本
+            ocr_text: 硬字幕 OCR 提取的文本（专有名词正确）
+
+        Returns:
+            校正后的对话文本
+        """
+        prompt = (
+            "## 任务\n"
+            "你是一位文字校对专家。下面有两份来自同一视频的文本：\n\n"
+            "### A. 语音转录文本（Whisper）\n"
+            "由语音识别生成，**对话覆盖全面**，但**专有名词可能听错**"
+            "（人名、地名、术语等因同音/近音被误识别）。\n\n"
+            "### B. 硬字幕 OCR 文本\n"
+            "从视频画面的字幕中直接提取，**专有名词准确**，但只覆盖了部分对话。\n\n"
+            "## 要求\n"
+            "1. 以 A 为主体，保持其完整的对话覆盖和时间戳\n"
+            "2. 用 B 中的**正确专有名词**替换 A 中对应的**错误/近似写法**"
+            "（人名、地名、组织名、特殊术语等）\n"
+            "3. 不要改动 A 中与专有名词无关的普通对话内容\n"
+            "4. 如果 B 中出现了 A 完全没有的台词，在对应时间位置补充进去\n"
+            "5. 直接输出校正后的完整文本，不要加任何解释说明\n\n"
+            f"### A. 语音转录文本\n{dialogue_text[:400000]}\n\n"
+            f"### B. 硬字幕 OCR 文本\n{ocr_text[:100000]}"
+        )
+
+        response = self.client.chat.completions.create(
+            model=Settings.DEEPSEEK_MODEL,
+            messages=[
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=200000,
+            temperature=0.2,  # 低温度，校正任务需要精确
+        )
+
+        return response.choices[0].message.content
+
     def generate(
         self,
         video_title: str,

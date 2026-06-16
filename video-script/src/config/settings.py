@@ -40,8 +40,8 @@ class Settings:
     DIALOGUE_HEAVY_RATIO: float = 0.6  # 对话占比阈值（超过则减帧）
 
     # -- FFmpeg --
-    FFMPEG_PATH: str = "ffmpeg"
-    FFPROBE_PATH: str = "ffprobe"
+    FFMPEG_PATH: str = os.getenv("FFMPEG_PATH", "ffmpeg")
+    FFPROBE_PATH: str = os.getenv("FFPROBE_PATH", "ffprobe")
 
     @classmethod
     def is_ready(cls) -> bool:
